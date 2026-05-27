@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Word Runner</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div>
+        <h1>Word Runner</h1>
+        <p>Puzzle after puzzle, no waiting.</p>
+      </div>
+      <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle theme">🌙</button>
+    </header>
+
+    <main>
+      <section class="panel controls">
+        <label for="wordLength">Word length</label>
+        <select id="wordLength"></select>
+        <button id="newGameBtn" type="button">New puzzle</button>
+      </section>
+
+      <section class="stats" aria-label="Statistics">
+        <div><strong id="playedStat">0</strong><span>Played</span></div>
+        <div><strong id="winsStat">0</strong><span>Wins</span></div>
+        <div><strong id="streakStat">0</strong><span>Streak</span></div>
+        <div><strong id="bestStat">0</strong><span>Best</span></div>
+      </section>
+
+      <section id="message" class="message" role="status" aria-live="polite"></section>
+      <section id="board" class="board" aria-label="Game board"></section>
+      <section id="keyboard" class="keyboard" aria-label="Keyboard"></section>
+    </main>
+
+    <footer>
+      <p>Type or tap letters. Guesses must be valid dictionary words.</p>
+    </footer>
+  </div>
+
+  <script src="dictionary.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

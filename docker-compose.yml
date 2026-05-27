@@ -1,0 +1,7 @@
+services:
+  word-runner:
+    build: .
+    image: word-runner:latest
+    ports:
+      - "8080:80"
+    restart: unless-stopped
