@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Word Runner</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -17,11 +17,14 @@
     </header>
 
     <main>
-      <section class="panel controls">
-        <label for="wordLength">Word length</label>
-        <select id="wordLength"></select>
-        <button id="newGameBtn" type="button">New puzzle</button>
-      </section>
+      <details class="panel controls" id="puzzleControls" open>
+        <summary>New Puzzle <span class="controls-chevron">▾</span></summary>
+        <div class="controls-inner">
+          <label for="wordLength">Word length</label>
+          <select id="wordLength"></select>
+          <button id="newGameBtn" type="button">New puzzle</button>
+        </div>
+      </details>
 
       <section class="stats" aria-label="Statistics">
         <div><strong id="playedStat">0</strong><span>Played</span></div>

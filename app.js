@@ -29,7 +29,15 @@ function init() {
   setupTheme();
   setupLengthSelector();
   newGame();
-  newGameBtn.addEventListener('click', newGame);
+  if (window.innerWidth <= 520) {
+    document.getElementById('puzzleControls').removeAttribute('open');
+  }
+  newGameBtn.addEventListener('click', () => {
+    newGame();
+    if (window.innerWidth <= 520) {
+      document.getElementById('puzzleControls').removeAttribute('open');
+    }
+  });
   wordLength.addEventListener('change', () => {
     if (isGameInProgress()) {
       wordLength.value = state.length;
