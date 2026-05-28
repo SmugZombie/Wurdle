@@ -36,6 +36,17 @@
       <section id="message" class="message" role="status" aria-live="polite"></section>
       <section id="board" class="board" aria-label="Game board"></section>
       <section id="keyboard" class="keyboard" aria-label="Keyboard"></section>
+
+      <div id="thanksModal" class="thanks-modal" hidden role="status">Thanks for the feedback!</div>
+
+      <section id="feedback" class="feedback" hidden aria-label="Word feedback">
+        <p class="feedback-prompt">How was that word?</p>
+        <div class="feedback-actions">
+          <button type="button" id="thumbsUpBtn" class="feedback-btn" aria-label="Good word">👍 Good</button>
+          <button type="button" id="thumbsDownBtn" class="feedback-btn feedback-btn--down" aria-label="Ban this word">👎 Ban it</button>
+          <button type="button" id="skipFeedbackBtn" class="feedback-btn feedback-btn--skip">Skip</button>
+        </div>
+      </section>
     </main>
 
     <footer>

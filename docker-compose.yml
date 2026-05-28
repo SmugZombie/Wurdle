@@ -1,7 +1,21 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: word-runner-api:latest
+    volumes:
+      - wurdle-data:/app/data
+    restart: unless-stopped
+
   word-runner:
     build: .
     image: word-runner:latest
     ports:
       - "8080:80"
+    depends_on:
+      - api
     restart: unless-stopped
+
+volumes:
+  wurdle-data:

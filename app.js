@@ -1,4 +1,4 @@
-const API_BASE = 'https://freedictionaryapi.com/api/v1/entries/en';
+const API = '/api';
 const MAX_GUESSES = 6;
 const STORAGE = {
   theme: 'word-runner-theme',
@@ -24,28 +24,30 @@ const message = document.getElementById('message');
 const wordLength = document.getElementById('wordLength');
 const newGameBtn = document.getElementById('newGameBtn');
 const themeToggle = document.getElementById('themeToggle');
+const feedbackEl = document.getElementById('feedback');
 
-function init() {
+async function init() {
   setupTheme();
   setupLengthSelector();
-  newGame();
+  setupFeedbackButtons();
+  await newGame();
   if (window.innerWidth <= 520) {
     document.getElementById('puzzleControls').removeAttribute('open');
   }
-  newGameBtn.addEventListener('click', () => {
-    newGame();
+  newGameBtn.addEventListener('click', async () => {
+    await newGame();
     if (window.innerWidth <= 520) {
       document.getElementById('puzzleControls').removeAttribute('open');
     }
   });
-  wordLength.addEventListener('change', () => {
+  wordLength.addEventListener('change', async () => {
     if (isGameInProgress()) {
       wordLength.value = state.length;
       return setMessage('Finish this puzzle or start a new one before changing word length.', true);
     }
     state.length = Number(wordLength.value);
     localStorage.setItem(STORAGE.length, state.length);
-    newGame();
+    await newGame();
   });
   document.addEventListener('keydown', handlePhysicalKey);
 }
@@ -72,17 +74,40 @@ function setupLengthSelector() {
   wordLength.value = state.length;
 }
 
-function newGame() {
-  const words = WORDS_BY_LENGTH[state.length] || [];
-  state.answer = words[Math.floor(Math.random() * words.length)].toLowerCase();
+function setupFeedbackButtons() {
+  document.getElementById('thumbsUpBtn').addEventListener('click', () => submitFeedback('up'));
+  document.getElementById('thumbsDownBtn').addEventListener('click', () => submitFeedback('down'));
+  document.getElementById('skipFeedbackBtn').addEventListener('click', () => submitFeedback('skip'));
+}
+
+async function newGame() {
   state.row = 0;
   state.col = 0;
   state.guesses = Array.from({ length: MAX_GUESSES }, () => Array(state.length).fill(''));
   state.results = Array.from({ length: MAX_GUESSES }, () => Array(state.length).fill(''));
   state.complete = false;
   state.keyStates = {};
-  setMessage('');
+  state.checking = true;
+  state.answer = '';
+  hideFeedback();
+  setMessage('Loading...');
   renderBoard();
+  renderKeyboard();
+
+  try {
+    const res = await fetch(`${API}/word?length=${state.length}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.answer = data.word;
+  } catch {
+    setMessage('Could not load puzzle — please try again.', true);
+    state.checking = false;
+    renderKeyboard();
+    return;
+  }
+
+  state.checking = false;
+  setMessage('');
   renderKeyboard();
   renderStats();
   updateLengthSelectorState();
@@ -177,7 +202,7 @@ async function submitGuess() {
   if (!/^[a-z]+$/.test(guess)) return setMessage('Use letters only.', true);
 
   state.checking = true;
-  setMessage('Checking dictionary...');
+  setMessage('Checking...');
   renderKeyboard();
 
   const valid = await isValidWord(guess);
@@ -197,53 +222,18 @@ async function submitGuess() {
 async function isValidWord(word) {
   const clean = String(word || '').trim().toLowerCase();
   if (!/^[a-z]{5,10}$/.test(clean)) return false;
-
-  const local = WORDS_BY_LENGTH[clean.length] || [];
-  if (local.includes(clean)) return true;
-
-  const cacheKey = `word-runner-valid-${clean}`;
-  const cached = localStorage.getItem(cacheKey);
-  if (cached === 'true') return true;
-  if (cached === 'false') return false;
-
   try {
-    const res = await fetch(`${API_BASE}/${encodeURIComponent(clean)}`, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
+    const res = await fetch(`${API}/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: clean })
     });
-
-    if (!res.ok) {
-      localStorage.setItem(cacheKey, 'false');
-      return false;
-    }
-
+    if (!res.ok) return false;
     const data = await res.json();
-    const valid = hasDictionaryDefinition(data, clean);
-    localStorage.setItem(cacheKey, String(valid));
-    return valid;
+    return data.valid === true;
   } catch {
-    // Offline/API failure should not allow unknown words through.
     return false;
   }
-}
-
-function hasDictionaryDefinition(data, word) {
-  const entries = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : []);
-  if (!entries.length) return false;
-
-  return entries.some(entry => {
-    const entryWord = String(entry.word || entry.entry || entry.headword || '').toLowerCase();
-    const wordMatches = !entryWord || entryWord === word;
-    const hasMeanings = Array.isArray(entry.meanings) && entry.meanings.some(meaning => {
-      if (Array.isArray(meaning.definitions) && meaning.definitions.length > 0) return true;
-      if (typeof meaning.definition === 'string' && meaning.definition.trim()) return true;
-      return false;
-    });
-    const hasDefinitions = Array.isArray(entry.definitions) && entry.definitions.length > 0;
-    const hasSenses = Array.isArray(entry.senses) && entry.senses.length > 0;
-    const hasDefinitionText = typeof entry.definition === 'string' && entry.definition.trim();
-    return wordMatches && (hasMeanings || hasDefinitions || hasSenses || hasDefinitionText);
-  });
 }
 
 function scoreGuess(guess) {
@@ -286,6 +276,35 @@ function finish(won) {
   renderStats();
   setMessage(won ? `Nice! Answer: ${state.answer.toUpperCase()}` : `Answer: ${state.answer.toUpperCase()}`);
   updateLengthSelectorState();
+  showFeedback();
+}
+
+function showFeedback() {
+  feedbackEl.hidden = false;
+}
+
+function hideFeedback() {
+  feedbackEl.hidden = true;
+}
+
+async function submitFeedback(rating) {
+  hideFeedback();
+  if (rating !== 'skip') {
+    showThanksModal();
+    fetch(`${API}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: state.answer, rating })
+    }).catch(() => {});
+  }
+}
+
+function showThanksModal() {
+  const modal = document.getElementById('thanksModal');
+  modal.classList.remove('dissolving');
+  modal.hidden = false;
+  setTimeout(() => modal.classList.add('dissolving'), 2400);
+  setTimeout(() => { modal.hidden = true; }, 3000);
 }
 
 function getStats() {
