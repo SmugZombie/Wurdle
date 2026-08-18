@@ -1,91 +1,159 @@
 #!/usr/bin/env node
 /**
- * Rebuild dictionary.js from the current list plus /usr/share/dict/words.
- * Each length bucket is expanded to 10× its current size (capped by available words).
+ * Rebuild the two word lists this project needs.
+ *
+ *   dictionary.js         answer pool  — common words only, one bucket per length
+ *   api/valid-words.txt   guess list   — every word a player may type
+ *
+ * These are deliberately different lists. Answers must be words people actually
+ * know; guesses should accept anything a dictionary would. Deriving both from a
+ * single list is what made ordinary words ("yellow", "chocolate", "strawberry")
+ * get rejected as "not in dictionary".
+ *
+ * Usage:
+ *   node scripts/build-dictionary.js            download sources if not cached
+ *   node scripts/build-dictionary.js --offline  fail instead of downloading
+ *   node scripts/build-dictionary.js --refresh  re-download even if cached
+ *   node scripts/build-dictionary.js --answers 2000
  */
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
+const CACHE_DIR = path.join(__dirname, '.cache');
 const DICT_PATH = path.join(ROOT, 'dictionary.js');
+const VALID_PATH = path.join(ROOT, 'api', 'valid-words.txt');
+const BLOCKLIST_PATH = path.join(__dirname, 'blocklist.txt');
 const SYSTEM_DICT = '/usr/share/dict/words';
-const MULTIPLIER = 10;
+const PROPER_NAMES = '/usr/share/dict/propernames';
+
 const LENGTHS = [5, 6, 7, 8, 9, 10];
+const MIN_LEN = LENGTHS[0];
+const MAX_LEN = LENGTHS[LENGTHS.length - 1];
+const WORD_RE = new RegExp(`^[a-z]{${MIN_LEN},${MAX_LEN}}$`);
 
-function loadCurrent() {
-  const text = fs.readFileSync(DICT_PATH, 'utf8');
-  const match = text.match(/window\.WORDS_BY_LENGTH\s*=\s*(\{[\s\S]*\});/);
-  if (!match) throw new Error('Could not parse dictionary.js');
-  return eval(`(${match[1]})`);
+const SOURCES = {
+  // ~370k English words, includes inflected forms (plurals, -ed, -ing) that
+  // Webster's-derived lists such as /usr/share/dict/words are missing.
+  'words_alpha.txt':
+    'https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt',
+  // Frequency-ranked word list (OpenSubtitles 2018). Ranking is what makes the
+  // answer pool "common words" rather than "words starting with A".
+  'en_full.txt':
+    'https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/en/en_full.txt'
+};
+
+const argv = process.argv.slice(2);
+const OFFLINE = argv.includes('--offline');
+const REFRESH = argv.includes('--refresh');
+const ANSWERS_PER_LENGTH = Number(argv[argv.indexOf('--answers') + 1]) || 1500;
+
+async function source(name) {
+  const file = path.join(CACHE_DIR, name);
+  if (fs.existsSync(file) && !REFRESH) return fs.readFileSync(file, 'utf8');
+  if (OFFLINE) throw new Error(`Missing cached source ${file} (--offline)`);
+
+  const url = SOURCES[name];
+  console.log(`Downloading ${url}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`GET ${url} failed: HTTP ${res.status}`);
+  const text = await res.text();
+
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(file, text, 'utf8');
+  return text;
 }
 
-function loadSystemWords() {
-  const lines = fs.readFileSync(SYSTEM_DICT, 'utf8').split(/\r?\n/);
-  const byLength = Object.fromEntries(LENGTHS.map((n) => [n, new Set()]));
-  for (const line of lines) {
+function lines(text) {
+  return text.split(/\r?\n/);
+}
+
+function readListFile(file) {
+  if (!fs.existsSync(file)) return [];
+  return lines(fs.readFileSync(file, 'utf8'));
+}
+
+function readBlocklist() {
+  const out = new Set();
+  for (const line of readListFile(BLOCKLIST_PATH)) {
     const word = line.trim().toLowerCase();
-    if (!/^[a-z]+$/.test(word)) continue;
-    if (word.length >= 5 && word.length <= 10) byLength[word.length].add(word);
-  }
-  return byLength;
-}
-
-function expandBucket(existing, pool, target) {
-  const out = [];
-  const seen = new Set();
-  for (const word of existing) {
-    const w = word.toLowerCase();
-    if (!/^[a-z]+$/.test(w) || seen.has(w)) continue;
-    seen.add(w);
-    out.push(w);
-  }
-  const extras = [...pool].filter((w) => !seen.has(w)).sort();
-  for (const word of extras) {
-    if (out.length >= target) break;
-    out.push(word);
+    if (word && !word.startsWith('#')) out.add(word);
   }
   return out;
 }
 
-function formatDictionary(byLength) {
-  const lines = ['window.WORDS_BY_LENGTH = {'];
-  for (let i = 0; i < LENGTHS.length; i++) {
-    const len = LENGTHS[i];
-    const comma = i < LENGTHS.length - 1 ? ',' : '';
-    lines.push(`  ${len}: ${JSON.stringify(byLength[len])}${comma}`);
-  }
-  lines.push('};', '');
-  return lines.join('\n');
+/** Every word a guess is allowed to be. Permissive by design. */
+function buildValidWords(wordsAlpha) {
+  const valid = new Set();
+  const add = (raw) => {
+    const word = raw.trim().toLowerCase();
+    if (WORD_RE.test(word)) valid.add(word);
+  };
+  lines(wordsAlpha).forEach(add);
+  readListFile(SYSTEM_DICT).forEach(add);
+  return valid;
 }
 
-function main() {
-  if (!fs.existsSync(SYSTEM_DICT)) {
-    console.error(`Missing system dictionary at ${SYSTEM_DICT}`);
-    process.exit(1);
-  }
+/** The most common words, longest-first bucket by bucket. */
+function buildAnswers(frequencyText, valid, blocked, names) {
+  const buckets = Object.fromEntries(LENGTHS.map((n) => [n, []]));
+  const seen = new Set();
 
-  const current = loadCurrent();
-  const system = loadSystemWords();
-  const expanded = {};
-  const stats = [];
+  for (const line of lines(frequencyText)) {
+    const word = (line.split(/\s+/)[0] || '').trim().toLowerCase();
+    if (!WORD_RE.test(word) || seen.has(word)) continue;
+    // Ranked corpus is lowercased subtitles, so it carries proper nouns,
+    // profanity and anything not actually in a dictionary. Filter all three.
+    if (!valid.has(word) || blocked.has(word) || names.has(word)) continue;
+    if (buckets[word.length].length >= ANSWERS_PER_LENGTH) continue;
+    seen.add(word);
+    buckets[word.length].push(word);
+  }
 
   for (const len of LENGTHS) {
-    const before = current[len].length;
-    const target = before * MULTIPLIER;
-    expanded[len] = expandBucket(current[len], system[len], target);
-    stats.push({ len, before, target, after: expanded[len].length });
+    if (!buckets[len].length) throw new Error(`Empty answer bucket for length ${len}`);
   }
-
-  const output = formatDictionary(expanded);
-  fs.writeFileSync(DICT_PATH, output, 'utf8');
-
-  const totalBefore = stats.reduce((s, x) => s + x.before, 0);
-  const totalAfter = stats.reduce((s, x) => s + x.after, 0);
-  console.log(`Wrote ${DICT_PATH}`);
-  for (const { len, before, target, after } of stats) {
-    console.log(`  ${len} letters: ${before} → ${after} (target ${target})`);
-  }
-  console.log(`  total: ${totalBefore} → ${totalAfter}`);
+  return buckets;
 }
 
-main();
+function formatDictionary(buckets) {
+  const body = LENGTHS.map((len) => `  ${len}: ${JSON.stringify(buckets[len])}`).join(',\n');
+  return [
+    '// Generated by scripts/build-dictionary.js — do not edit by hand.',
+    '// Answer pool only: common words, ranked by usage frequency.',
+    '// The list of words a guess may be is api/valid-words.txt.',
+    'window.WORDS_BY_LENGTH = {',
+    body,
+    '};',
+    ''
+  ].join('\n');
+}
+
+async function main() {
+  const blocked = readBlocklist();
+  const names = new Set(
+    readListFile(PROPER_NAMES).map((n) => n.trim().toLowerCase()).filter(Boolean)
+  );
+
+  const valid = buildValidWords(await source('words_alpha.txt'));
+  const answers = buildAnswers(await source('en_full.txt'), valid, blocked, names);
+
+  fs.writeFileSync(DICT_PATH, formatDictionary(answers), 'utf8');
+  fs.writeFileSync(VALID_PATH, [...valid].sort().join('\n') + '\n', 'utf8');
+
+  console.log(`Wrote ${DICT_PATH}`);
+  for (const len of LENGTHS) {
+    const bucket = answers[len];
+    console.log(`  ${len} letters: ${bucket.length} answers (e.g. ${bucket.slice(0, 3).join(', ')})`);
+  }
+  console.log(`Wrote ${VALID_PATH}`);
+  console.log(`  ${valid.size} valid guesses`);
+  if (!fs.existsSync(SYSTEM_DICT)) {
+    console.log(`  note: ${SYSTEM_DICT} not present, used ${Object.keys(SOURCES)[0]} only`);
+  }
+}
+
+main().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

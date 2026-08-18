@@ -1,0 +1,7 @@
+.git
+.gitignore
+node_modules
+api/node_modules
+api/data
+scripts/.cache
+README.md

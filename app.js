@@ -6,8 +6,17 @@ const STORAGE = {
   stats: 'word-runner-stats-v1'
 };
 
+const MIN_LENGTH = 5;
+const MAX_LENGTH = 10;
+
+function savedLength() {
+  const saved = Number(localStorage.getItem(STORAGE.length));
+  if (!Number.isInteger(saved) || saved < MIN_LENGTH || saved > MAX_LENGTH) return MIN_LENGTH;
+  return saved;
+}
+
 const state = {
-  length: Number(localStorage.getItem(STORAGE.length)) || 5,
+  length: savedLength(),
   answer: '',
   row: 0,
   col: 0,
@@ -15,7 +24,8 @@ const state = {
   results: [],
   complete: false,
   keyStates: {},
-  checking: false
+  checking: false,
+  gameId: 0
 };
 
 const board = document.getElementById('board');
@@ -65,7 +75,7 @@ function setupTheme() {
 }
 
 function setupLengthSelector() {
-  for (let i = 5; i <= 10; i++) {
+  for (let i = MIN_LENGTH; i <= MAX_LENGTH; i++) {
     const option = document.createElement('option');
     option.value = i;
     option.textContent = `${i} letters`;
@@ -81,6 +91,8 @@ function setupFeedbackButtons() {
 }
 
 async function newGame() {
+  // Rapid "New puzzle" clicks overlap; only the newest request may set the answer.
+  const gameId = ++state.gameId;
   state.row = 0;
   state.col = 0;
   state.guesses = Array.from({ length: MAX_GUESSES }, () => Array(state.length).fill(''));
@@ -98,8 +110,10 @@ async function newGame() {
     const res = await fetch(`${API}/word?length=${state.length}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (gameId !== state.gameId) return;
     state.answer = data.word;
   } catch {
+    if (gameId !== state.gameId) return;
     setMessage('Could not load puzzle — please try again.', true);
     state.checking = false;
     renderKeyboard();
